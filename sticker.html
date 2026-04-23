@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>nori sticker</title>
+<title>nori</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700;800&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
@@ -64,7 +64,25 @@ header {
   animation: slideInLeft 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.logo-icon {
+  width: clamp(32px, 5vh, 40px);
+  height: clamp(32px, 5vh, 40px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  background: rgba(0, 240, 255, 0.04);
+  flex-shrink: 0;
+  animation: float 3s ease-in-out infinite;
+  overflow: hidden;
+}
 
+.logo-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
 
 .logo-title {
   font-family: 'Orbitron', sans-serif;
@@ -134,26 +152,6 @@ header {
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.7); }
-}
-
-.logo-icon {
-  width: clamp(32px, 5vh, 40px);
-  height: clamp(32px, 5vh, 40px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9px;
-  border: 1px solid rgba(0, 240, 255, 0.15);
-  background: rgba(0, 240, 255, 0.04);
-  flex-shrink: 0;
-  animation: float 3s ease-in-out infinite;
-  overflow: hidden;
-}
-
-.logo-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
 }
 
 main {
@@ -318,6 +316,7 @@ main {
   .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
 }
 
+
 @keyframes slideInLeft {
   from { opacity: 0; transform: translateX(-30px); }
   to { opacity: 1; transform: translateX(0); }
@@ -425,6 +424,65 @@ async function tryFetch(url) {
 
 async function init() {
   if (!pasteId) { showState('empty'); return; }
+
+  const rawUrl = `https://pastefy.app/${pasteId}/raw`;
+  document.getElementById('raw-link').href = rawUrl;
+  
+  const text = await tryFetch(rawUrl);
+  if (!text) { showState('error'); return; }
+
+  const ids = parseIds(text);
+  if (!ids.length) { showState('error'); return; }
+
+  const usernameEl = document.getElementById('header-username');
+  usernameEl.textContent = (text.match(/^Stickers from:\s*(.+)$/m) || [])[1]?.trim() || 'Sticker Pack';
+  usernameEl.style.display = 'block';
+
+  document.getElementById('hcount-text').textContent = `${ids.length} Stickers`;
+  document.getElementById('hcount').style.display = 'flex';
+  document.getElementById('copy-all').onclick = function() { copyText(ids.join('\n'), this); };
+
+  const grid = document.getElementById('grid');
+  ids.forEach(id => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-img">
+        <img id="img-${id}" src="https://placehold.co/420x420/111/444?text=..." loading="lazy">
+      </div>
+      <div class="card-foot">
+        <div class="card-id">${id}</div>
+        <button class="copy-btn">Copy ID</button>
+      </div>`;
+    card.querySelector('.copy-btn').onclick = () => copyText(id, card.querySelector('.copy-btn'));
+    grid.appendChild(card);
+  });
+
+  showState('content');
+
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const proxyUrl = `https://thumbnails.roproxy.com/v1/assets?assetIds=${chunk.join(',')}&returnPolicy=PlaceHolder&size=420x420&format=Png`;
+    
+    fetch(proxyUrl)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.data) {
+          data.data.forEach(item => {
+            const imgElement = document.getElementById(`img-${item.targetId}`);
+            if (imgElement) {
+              imgElement.src = item.state === "Completed" ? item.imageUrl : "https://placehold.co/420x420/111/ff3333?text=N/A";
+            }
+          });
+        }
+      }).catch(console.error);
+  }
+}
+
+init();
+</script>
+</body>
+</html>  if (!pasteId) { showState('empty'); return; }
 
   const rawUrl = `https://pastefy.app/${pasteId}/raw`;
   document.getElementById('raw-link').href = rawUrl;
