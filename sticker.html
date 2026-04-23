@@ -353,7 +353,7 @@ main {
 
   <div id="error" style="display:none">
     <div class="state-title">Could not load</div>
-    <div class="state-sub">The paste may be invalid, expired, or unreachable.</div>
+    <div class="state-sub" id="error-detail">The paste may be invalid, expired, or unreachable.</div>
   </div>
 
   <div id="content">
@@ -374,7 +374,7 @@ main {
 <script>
 const pasteId = new URLSearchParams(location.search).get('id');
 
-function showState(el) {
+function showState(el, detail) {
   ['loading','empty','error','content'].forEach(x => {
     const dom = document.getElementById(x);
     if (!dom) return;
@@ -384,6 +384,9 @@ function showState(el) {
       dom.style.display = 'none';
     }
   });
+  if (detail && el === 'error') {
+    document.getElementById('error-detail').textContent = detail;
+  }
 }
 
 function copyText(text, btn) {
@@ -404,28 +407,83 @@ function parseIds(t) {
   return t.match(/\d{6,}/g) || [];
 }
 
-async function tryFetch(url) {
-  try {
-    const r = await fetch(url, { cache: 'no-store' });
-    if (r.ok) {
-      const text = await r.text();
-      if (text && text.length > 0) return text;
-    }
-  } catch (e) {
-    console.log('Direct fetch failed, trying proxy...');
-  }
+async function fetchPaste(id) {
+  const apiUrl = `https://pastefy.app/api/v2/paste/${id}`;
   
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
   try {
-    const r = await fetch(proxyUrl, { cache: 'no-store' });
-    if (r.ok) {
-      const text = await r.text();
-      if (text && text.length > 0) return text;
+    const r = await fetch(apiUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!r.ok) {
+      if (r.status === 404) throw new Error('Paste not found (404)');
+      if (r.status === 403) throw new Error('Paste is private (403)');
+      throw new Error(`HTTP ${r.status}`);
     }
-  } catch (e) {
-    console.log('Proxy fetch failed');
+    
+    const data = await r.json();
+    
+    if (!data || !data.paste) {
+      throw new Error('Invalid API response');
+    }
+    
+    const paste = data.paste;
+    
+    if (paste.content) {
+      return {
+        content: paste.content,
+        title: paste.title || '',
+        rawUrl: paste.raw_url || `https://pastefy.app/${id}/raw`
+      };
+    }
+    
+    if (paste.pastes && Array.isArray(paste.pastes)) {
+      const combined = paste.pastes.map(p => p.content || '').join('\n');
+      return {
+        content: combined,
+        title: paste.title || '',
+        rawUrl: `https://pastefy.app/${id}/raw`
+      };
+    }
+    
+    throw new Error('No content in paste');
+    
+  } catch (err) {
+    console.log('API fetch failed:', err.message);
+    
+    const proxyUrls = [
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(apiUrl)}`,
+      `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`
+    ];
+    
+    for (const proxyUrl of proxyUrls) {
+      try {
+        const r = await fetch(proxyUrl);
+        if (!r.ok) continue;
+        
+        let data;
+        if (proxyUrl.includes('allorigins')) {
+          const wrapped = await r.json();
+          data = JSON.parse(wrapped.contents);
+        } else {
+          data = await r.json();
+        }
+        
+        if (data && data.paste && data.paste.content) {
+          return {
+            content: data.paste.content,
+            title: data.paste.title || '',
+            rawUrl: data.paste.raw_url || `https://pastefy.app/${id}/raw`
+          };
+        }
+      } catch (e) {
+        console.log('Proxy failed:', e.message);
+      }
+    }
+    
+    throw new Error('All fetch methods failed. Paste may be deleted or private.');
   }
-  return null;
 }
 
 function setDate() {
@@ -442,28 +500,31 @@ async function init() {
     return;
   }
 
-  const rawUrl = `https://pastefy.app/${pasteId}/raw`;
-  document.getElementById('raw-link').href = rawUrl;
-  
-  const text = await tryFetch(rawUrl);
-  if (!text) {
-    showState('error');
+  let pasteData;
+  try {
+    pasteData = await fetchPaste(pasteId);
+  } catch (err) {
+    showState('error', err.message);
     return;
   }
 
+  const text = pasteData.content;
   const ids = parseIds(text);
+  
   if (!ids.length) {
-    showState('error');
+    showState('error', 'No sticker IDs found in paste content.');
     return;
   }
 
   const usernameMatch = text.match(/^Stickers from:\s*(.+)$/m);
   const usernameEl = document.getElementById('header-username');
-  usernameEl.textContent = (usernameMatch && usernameMatch[1]) ? usernameMatch[1].trim() : 'Sticker Pack';
+  usernameEl.textContent = (usernameMatch && usernameMatch[1]) ? usernameMatch[1].trim() : (pasteData.title || 'Sticker Pack');
   usernameEl.style.display = 'block';
 
   document.getElementById('hcount-text').textContent = `${ids.length} Stickers`;
   document.getElementById('hcount').style.display = 'flex';
+  
+  document.getElementById('raw-link').href = pasteData.rawUrl;
   
   document.getElementById('copy-all').onclick = function() {
     copyText(ids.join('\n'), this);
@@ -515,4 +576,5 @@ async function init() {
 init();
 </script>
 </body>
-</html>
+  </html>
+      
