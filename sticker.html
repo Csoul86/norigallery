@@ -154,21 +154,6 @@ main {
   text-align: center;
 }
 
-.state-title {
-  font-family: var(--display);
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.02em;
-}
-
-.state-sub {
-  font-size: 11px;
-  color: var(--text-dim);
-  max-width: 280px;
-  line-height: 1.6;
-}
-
 .spinner {
   width: 32px;
   height: 32px;
@@ -347,13 +332,12 @@ main {
   </div>
 
   <div id="empty" style="display:none">
-    <div class="state-title">No paste ID provided</div>
-    <div class="state-sub">Add ?id=YOUR_PASTE_ID to the URL</div>
+    <div class="state-title">kahit anong pangalan</div>
   </div>
 
   <div id="error" style="display:none">
     <div class="state-title">Could not load</div>
-    <div class="state-sub" id="error-detail">The paste may be invalid, expired, or unreachable.</div>
+    <div class="state-sub">The paste may be invalid, expired, or unreachable.</div>
   </div>
 
   <div id="content">
@@ -374,19 +358,10 @@ main {
 <script>
 const pasteId = new URLSearchParams(location.search).get('id');
 
-function showState(el, detail) {
+function showState(el) {
   ['loading','empty','error','content'].forEach(x => {
-    const dom = document.getElementById(x);
-    if (!dom) return;
-    if (x === el) {
-      dom.style.display = (el === 'content') ? 'block' : 'flex';
-    } else {
-      dom.style.display = 'none';
-    }
+    document.getElementById(x).style.display = (x === el) ? (el === 'content' ? 'block' : 'flex') : 'none';
   });
-  if (detail && el === 'error') {
-    document.getElementById('error-detail').textContent = detail;
-  }
 }
 
 function copyText(text, btn) {
@@ -397,138 +372,45 @@ function copyText(text, btn) {
   (navigator.clipboard ? navigator.clipboard.writeText(text).catch(fallback) : Promise.resolve(fallback())).then(() => {
     if (!btn) return;
     const orig = btn.innerHTML;
-    btn.innerHTML = '<span>Copied!</span>';
+    btn.innerHTML = btn.innerHTML.replace(/Copy[\w\s]*/i, 'Copied!');
     setTimeout(() => { btn.innerHTML = orig; }, 1500);
   });
 }
 
 function parseIds(t) {
-  if (!t) return [];
   return t.match(/\d{6,}/g) || [];
 }
 
-async function fetchPaste(id) {
-  const apiUrl = `https://pastefy.app/api/v2/paste/${id}`;
-  
-  try {
-    const r = await fetch(apiUrl, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' }
-    });
-    
-    if (!r.ok) {
-      if (r.status === 404) throw new Error('Paste not found (404)');
-      if (r.status === 403) throw new Error('Paste is private (403)');
-      throw new Error(`HTTP ${r.status}`);
-    }
-    
-    const data = await r.json();
-    
-    if (!data || !data.paste) {
-      throw new Error('Invalid API response');
-    }
-    
-    const paste = data.paste;
-    
-    if (paste.content) {
-      return {
-        content: paste.content,
-        title: paste.title || '',
-        rawUrl: paste.raw_url || `https://pastefy.app/${id}/raw`
-      };
-    }
-    
-    if (paste.pastes && Array.isArray(paste.pastes)) {
-      const combined = paste.pastes.map(p => p.content || '').join('\n');
-      return {
-        content: combined,
-        title: paste.title || '',
-        rawUrl: `https://pastefy.app/${id}/raw`
-      };
-    }
-    
-    throw new Error('No content in paste');
-    
-  } catch (err) {
-    console.log('API fetch failed:', err.message);
-    
-    const proxyUrls = [
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(apiUrl)}`,
-      `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`
-    ];
-    
-    for (const proxyUrl of proxyUrls) {
-      try {
-        const r = await fetch(proxyUrl);
-        if (!r.ok) continue;
-        
-        let data;
-        if (proxyUrl.includes('allorigins')) {
-          const wrapped = await r.json();
-          data = JSON.parse(wrapped.contents);
-        } else {
-          data = await r.json();
-        }
-        
-        if (data && data.paste && data.paste.content) {
-          return {
-            content: data.paste.content,
-            title: data.paste.title || '',
-            rawUrl: data.paste.raw_url || `https://pastefy.app/${id}/raw`
-          };
-        }
-      } catch (e) {
-        console.log('Proxy failed:', e.message);
-      }
-    }
-    
-    throw new Error('All fetch methods failed. Paste may be deleted or private.');
+async function tryFetch(url) {
+  const proxies = [url, `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` ];
+  for (const u of proxies) {
+    try {
+      const r = await fetch(u);
+      if (r.ok) { const t = await r.text(); if (t) return t; }
+    } catch (_) {}
   }
-}
-
-function setDate() {
-  const now = new Date();
-  const opts = { month: 'short', day: 'numeric', year: 'numeric' };
-  document.getElementById('header-date').textContent = now.toLocaleDateString('en-US', opts);
+  return null;
 }
 
 async function init() {
-  setDate();
+  if (!pasteId) { showState('empty'); return; }
+
+  const rawUrl = `https://pastefy.app/${pasteId}/raw`;
+  document.getElementById('raw-link').href = rawUrl;
   
-  if (!pasteId) {
-    showState('empty');
-    return;
-  }
+  const text = await tryFetch(rawUrl);
+  if (!text) { showState('error'); return; }
 
-  let pasteData;
-  try {
-    pasteData = await fetchPaste(pasteId);
-  } catch (err) {
-    showState('error', err.message);
-    return;
-  }
-
-  const text = pasteData.content;
   const ids = parseIds(text);
-  
-  if (!ids.length) {
-    showState('error', 'No sticker IDs found in paste content.');
-    return;
-  }
+  if (!ids.length) { showState('error'); return; }
 
-  const usernameMatch = text.match(/^Stickers from:\s*(.+)$/m);
   const usernameEl = document.getElementById('header-username');
-  usernameEl.textContent = (usernameMatch && usernameMatch[1]) ? usernameMatch[1].trim() : (pasteData.title || 'Sticker Pack');
+  usernameEl.textContent = (text.match(/^Stickers from:\s*(.+)$/m) || [])[1]?.trim() || 'Sticker Pack';
   usernameEl.style.display = 'block';
 
   document.getElementById('hcount-text').textContent = `${ids.length} Stickers`;
   document.getElementById('hcount').style.display = 'flex';
-  
-  document.getElementById('raw-link').href = pasteData.rawUrl;
-  
-  document.getElementById('copy-all').onclick = function() {
-    copyText(ids.join('\n'), this);
-  };
+  document.getElementById('copy-all').onclick = function() { copyText(ids.join('\n'), this); };
 
   const grid = document.getElementById('grid');
   ids.forEach(id => {
@@ -536,7 +418,7 @@ async function init() {
     card.className = 'card';
     card.innerHTML = `
       <div class="card-img">
-        <img id="img-${id}" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Crect width='100%25' height='100%25' fill='%23111'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%23444' font-family='monospace' font-size='14'%3E...%3C/text%3E%3C/svg%3E" loading="lazy" alt="sticker ${id}">
+        <img id="img-${id}" src="https://placehold.co/420x420/111/444?text=..." loading="lazy">
       </div>
       <div class="card-foot">
         <div class="card-id">${id}</div>
@@ -550,31 +432,24 @@ async function init() {
 
   for (let i = 0; i < ids.length; i += 100) {
     const chunk = ids.slice(i, i + 100);
-    const thumbUrl = `https://thumbnails.roblox.com/v1/assets?assetIds=${chunk.join(',')}&returnPolicy=PlaceHolder&size=420x420&format=Png`;
+    const proxyUrl = `https://thumbnails.roproxy.com/v1/assets?assetIds=${chunk.join(',')}&returnPolicy=PlaceHolder&size=420x420&format=Png`;
     
-    try {
-      const r = await fetch(thumbUrl);
-      const data = await r.json();
-      if (data && data.data) {
-        data.data.forEach(item => {
-          const imgElement = document.getElementById(`img-${item.targetId}`);
-          if (imgElement) {
-            if (item.state === "Completed" && item.imageUrl) {
-              imgElement.src = item.imageUrl;
-            } else {
-              imgElement.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Crect width='100%25' height='100%25' fill='%23111'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%23ff3333' font-family='monospace' font-size='14'%3EN/A%3C/text%3E%3C/svg%3E";
+    fetch(proxyUrl)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.data) {
+          data.data.forEach(item => {
+            const imgElement = document.getElementById(`img-${item.targetId}`);
+            if (imgElement) {
+              imgElement.src = item.state === "Completed" ? item.imageUrl : "https://placehold.co/420x420/111/ff3333?text=N/A";
             }
-          }
-        });
-      }
-    } catch (err) {
-      console.error('Thumbnail fetch error:', err);
-    }
+          });
+        }
+      }).catch(console.error);
   }
 }
 
 init();
 </script>
 </body>
-  </html>
-      
+</html>
